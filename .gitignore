@@ -1,0 +1,5 @@
+# .env 파일 무시 (민감 정보)
+.env
+
+# targets 폴더 내부 모든 파일 무시
+targets/*

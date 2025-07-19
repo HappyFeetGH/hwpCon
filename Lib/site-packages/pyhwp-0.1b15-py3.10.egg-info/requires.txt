@@ -1,0 +1,5 @@
+
+[:platform_python_implementation != "Jython"]
+cryptography
+lxml
+olefile>=0.43
