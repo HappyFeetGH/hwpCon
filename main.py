@@ -3,6 +3,7 @@ import os
 import subprocess
 import shutil
 import time
+import psutil
 from dotenv import load_dotenv
 
 # 프로젝트 루트 경로 설정
@@ -26,7 +27,7 @@ def call_gemini_cli(prompt, input_content=""):
     except Exception as e:
         raise Exception(f"Gemini CLI 실행 오류: {e}")
 
-def organize_hwp_file(file_path, user_prompt="이 내용은 MCP로 추출된 HWP 텍스트야. 불필요한 부분 제거 후 3줄로 요약해. 다른 도구/파일 분석 금지. 직접 처리만."):
+def organize_hwp_file(file_path, user_prompt="아래는 MCP로 추출된 HWP 실제 내용이야. 이 텍스트를 기반으로 불필요한 부분 제거 후 3줄로 요약해. 추가 입력 요구 금지. 직접 요약만 출력."):
     # 공유 오류 방지: 파일 복사
     temp_path = file_path + ".temp"
     shutil.copyfile(file_path, temp_path)
@@ -40,36 +41,41 @@ def organize_hwp_file(file_path, user_prompt="이 내용은 MCP로 추출된 HWP
     if not hwp.open_document(abs_file_path):
         raise Exception("open_document 반환 False: 실패 로그 확인")
 
-    # 내용 추출 (MCP 직접 사용)
+    # 내용 추출 (MCP 직접 사용) + 로그 출력
     hwp_content = hwp.get_text()
-    if not hwp_content:
-        raise Exception("텍스트 추출 실패: 빈 내용")
+    print(f"디버깅: 추출된 HWP 내용 (길이: {len(hwp_content)}):\n{hwp_content[:200]}...")  # 처음 200자 출력 (전체 확인용)
+    if not hwp_content.strip():  # 빈 내용 확인
+        raise Exception("텍스트 추출 실패: 내용이 비어 있음. 파일 확인하세요.")
 
-    # 모델 호출: 추출 내용 강제 포함 + 분석 금지 지시
-    full_prompt = f"{user_prompt}\n\n추출된 HWP 내용:\n{hwp_content}"
+    # 모델 호출: full_prompt에 내용 포함 (input_content 비사용, 안정성 위해)
+    full_prompt = f"{user_prompt}\n\n추출 내용:\n{hwp_content}"
     response = call_gemini_cli(full_prompt)
 
     # 수정 예시: 모델 응답 기반
     hwp.replace_text("불필요", "", replace_all=True)  # 예시 정리
 
-    # 저장 전 권한 강제 설정 (읽기 전용 해제)
+    # 저장 전 권한 설정
     try:
-        os.chmod(file_path, 0o666)  # 쓰기 허용
+        os.chmod(file_path, 0o666)
         print("디버깅: 원본 파일 권한 설정 성공")
     except Exception as e:
-        print(f"권한 설정 실패: {e} - 무시하고 진행")
+        print(f"권한 설정 실패: {e}")
 
-    # 저장 시도
+    # 저장
     try:
         hwp.save_document(file_path)
         print("디버깅: 저장 성공")
     except Exception as e:
         raise Exception(f"문서 저장 실패: {e}")
 
-    # 종료: disconnect 후 지연
+    # 종료: disconnect 후 HWP 프로세스 강제 종료
     hwp.disconnect()
     print("디버깅: 연결 종료 성공")
-    time.sleep(5)  # 5초 대기: 파일 해제 확보 (이전 2초 부족 가능성)
+    time.sleep(2)
+    for proc in psutil.process_iter(['pid', 'name']):
+        if proc.info['name'] == 'Hwp.exe':
+            proc.terminate()
+            print("디버깅: HWP 프로세스 강제 종료")
 
     # 임시 파일 삭제: 반복 시도
     max_attempts = 5
